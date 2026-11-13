@@ -5,6 +5,14 @@ from textClass import Label
 from cellClass import Cell
 from imageClass import Image
 
+import os
+import sys
+
+if getattr(sys, "frozen", False):
+    os.chdir(sys._MEIPASS)
+else:
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
 # presets de dificuldade: tiles = células por lado, bombs = quantidade de bombas
 # (480 é divisível por 10, 15 e 20, então as células sempre encaixam certinho)
 DIFFICULTIES = [
