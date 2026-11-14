@@ -2,8 +2,14 @@ name: Minesweeper
 
 on:
   push:
-    tags: ["v1.0"]        # pushing a tag like v1.0 builds everything and creates a Release
+    tags: ["v*"]        # pushing a tag like v1.0 builds everything and creates a Release
   workflow_dispatch:    # lets you run it by hand from the Actions tab too
+
+env:
+  # Folder that contains main.py and the assets/ folder.
+  # Use "." if they sit at the top level of the repo,
+  # otherwise put the folder name here (e.g. "MineSweeper").
+  PROJECT_DIR: CampoMinado
 
 jobs:
   build:
@@ -14,11 +20,22 @@ jobs:
           - { name: windows, os: windows-latest }
           - { name: macos-apple-silicon, os: macos-latest }
           - { name: macos-intel, os: macos-15-intel }
-          - { name: linux, os: ubuntu-latest }
+          - { name: linux, os: ubuntu-24.04 }
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v5
+
+      # Fails early with a readable message if PROJECT_DIR is wrong
+      - name: Check project files
+        shell: bash
+        run: |
+          echo "Repo contents:"
+          ls -la
+          echo "Project folder (${PROJECT_DIR}):"
+          ls -la "${PROJECT_DIR}"
+          test -f "${PROJECT_DIR}/main.py" || { echo "::error::main.py not found in '${PROJECT_DIR}' - set PROJECT_DIR at the top of build.yml"; exit 1; }
+          test -d "${PROJECT_DIR}/assets" || { echo "::error::assets/ folder not found in '${PROJECT_DIR}'"; exit 1; }
 
       - uses: actions/setup-python@v6
         with:
@@ -30,11 +47,13 @@ jobs:
       # ---------- Windows: single .exe ----------
       - name: Build (Windows)
         if: runner.os == 'Windows'
+        working-directory: ${{ env.PROJECT_DIR }}
         run: pyinstaller --onefile --windowed --name MineSweeper --add-data "assets;assets" main.py
 
       # ---------- macOS: .app, zipped so it keeps its permissions ----------
       - name: Build (macOS)
         if: runner.os == 'macOS'
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           pyinstaller --windowed --name MineSweeper --add-data "assets:assets" main.py
           ditto -c -k --keepParent dist/MineSweeper.app dist/MineSweeper-${{ matrix.name }}.zip
@@ -42,6 +61,7 @@ jobs:
       # ---------- Linux: .deb that installs the game ----------
       - name: Build (Linux .deb)
         if: runner.os == 'Linux'
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           pyinstaller --onefile --name minesweeper --add-data "assets:assets" main.py
 
@@ -79,9 +99,9 @@ jobs:
         with:
           name: ${{ matrix.name }}
           path: |
-            dist/MineSweeper.exe
-            dist/*.zip
-            *.deb
+            ${{ env.PROJECT_DIR }}/dist/MineSweeper.exe
+            ${{ env.PROJECT_DIR }}/dist/*.zip
+            ${{ env.PROJECT_DIR }}/*.deb
           if-no-files-found: error
 
   # Only runs when you push a tag: collects every build into a GitHub Release
@@ -100,4 +120,5 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --generate-notes
+        # find -type f: the artifacts can land in subfolders (e.g. dist/), and gh needs file paths
+        run: gh release create "$GITHUB_REF_NAME" $(find artifacts -type f) --repo "$GITHUB_REPOSITORY" --generate-notes
