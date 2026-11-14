@@ -1,0 +1,103 @@
+name: Minesweeper
+
+on:
+  push:
+    tags: ["v1.0"]        # pushing a tag like v1.0 builds everything and creates a Release
+  workflow_dispatch:    # lets you run it by hand from the Actions tab too
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows, os: windows-latest }
+          - { name: macos-apple-silicon, os: macos-latest }
+          - { name: macos-intel, os: macos-15-intel }
+          - { name: linux, os: ubuntu-latest }
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pygame pyinstaller
+
+      # ---------- Windows: single .exe ----------
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: pyinstaller --onefile --windowed --name MineSweeper --add-data "assets;assets" main.py
+
+      # ---------- macOS: .app, zipped so it keeps its permissions ----------
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          pyinstaller --windowed --name MineSweeper --add-data "assets:assets" main.py
+          ditto -c -k --keepParent dist/MineSweeper.app dist/MineSweeper-${{ matrix.name }}.zip
+
+      # ---------- Linux: .deb that installs the game ----------
+      - name: Build (Linux .deb)
+        if: runner.os == 'Linux'
+        run: |
+          pyinstaller --onefile --name minesweeper --add-data "assets:assets" main.py
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0"
+          fi
+
+          PKG="minesweeper_${VERSION}_amd64"
+          mkdir -p "$PKG/DEBIAN" "$PKG/usr/bin" "$PKG/usr/share/applications" "$PKG/usr/share/pixmaps"
+          cp dist/minesweeper "$PKG/usr/bin/minesweeper"
+          cp assets/bomb.png "$PKG/usr/share/pixmaps/minesweeper.png"
+
+          cat > "$PKG/usr/share/applications/minesweeper.desktop" <<EOF
+          [Desktop Entry]
+          Name=Mine Sweeper
+          Exec=minesweeper
+          Icon=minesweeper
+          Type=Application
+          Categories=Game;LogicGame;
+          EOF
+
+          cat > "$PKG/DEBIAN/control" <<EOF
+          Package: minesweeper
+          Version: ${VERSION}
+          Architecture: amd64
+          Maintainer: Your Name <you@example.com>
+          Description: Minesweeper made with pygame
+          EOF
+
+          dpkg-deb --build --root-owner-group "$PKG"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            dist/MineSweeper.exe
+            dist/*.zip
+            *.deb
+          if-no-files-found: error
+
+  # Only runs when you push a tag: collects every build into a GitHub Release
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --generate-notes
